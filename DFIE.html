@@ -1,0 +1,423 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FinSight AI | Live Earnings Analyst</title>
+    
+    <!-- STABLE STACK: Tailwind, Chart.js, SheetJS (Excel Parsing), FontAwesome -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/3.9.1/chart.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+
+    <style>
+        /* Professional Dark Theme */
+        :root { --bg-dark: #0f172a; --panel: #1e293b; --border: #334155; --accent: #cb202d; /* Zomato Red-ish */ }
+        body { background-color: var(--bg-dark); color: #e2e8f0; font-family: 'Segoe UI', sans-serif; overflow: hidden; }
+        
+        .glass-panel { background: var(--panel); border: 1px solid var(--border); box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.3); }
+        .nav-item { cursor: pointer; border-left: 3px solid transparent; transition: all 0.2s; }
+        .nav-item:hover, .nav-item.active { background: rgba(203, 32, 45, 0.1); border-left-color: var(--accent); color: white; }
+        
+        /* Drag & Drop Zone */
+        .drop-zone { border: 2px dashed #475569; transition: 0.3s; }
+        .drop-zone:hover { border-color: var(--accent); background: rgba(203, 32, 45, 0.05); }
+
+        .loading-bar { width: 0%; height: 3px; background: var(--accent); transition: width 1s ease-in-out; }
+        
+        /* Tables */
+        .fin-table { width: 100%; font-size: 0.85rem; border-collapse: collapse; }
+        .fin-table th { text-align: right; padding: 10px; color: #94a3b8; border-bottom: 1px solid var(--border); }
+        .fin-table td { text-align: right; padding: 8px 10px; border-bottom: 1px solid #334155; font-family: 'Consolas', monospace; }
+        .fin-table td:first-child { text-align: left; color: #f1f5f9; font-family: 'Segoe UI', sans-serif; }
+    </style>
+</head>
+<body class="flex h-screen text-sm">
+
+    <!-- SIDEBAR -->
+    <div class="w-64 flex-shrink-0 bg-[#0b1120] border-r border-[#334155] flex flex-col z-20">
+        <div class="p-6 border-b border-[#334155]">
+            <div class="flex items-center gap-3 text-red-500 mb-1">
+                <i class="fas fa-search-dollar text-2xl"></i>
+                <h1 class="font-bold text-white text-lg tracking-wide">EARNINGS <span class="text-red-500">AI</span></h1>
+            </div>
+            <div class="text-[10px] text-gray-500 uppercase tracking-widest pl-1">Live Statement Analyzer</div>
+        </div>
+
+        <nav class="flex-1 py-6 space-y-1">
+            <div onclick="switchTab('upload')" id="nav-upload" class="nav-item active px-6 py-3 flex items-center gap-3 text-gray-400">
+                <i class="fas fa-cloud-upload-alt w-5"></i> Ingest Data
+            </div>
+            <div onclick="switchTab('dashboard')" id="nav-dashboard" class="nav-item px-6 py-3 flex items-center gap-3 text-gray-400">
+                <i class="fas fa-chart-line w-5"></i> Analyst Dashboard
+            </div>
+            <div onclick="switchTab('report')" id="nav-report" class="nav-item px-6 py-3 flex items-center gap-3 text-gray-400">
+                <i class="fas fa-file-contract w-5"></i> AI Insights (Memo)
+            </div>
+        </nav>
+        
+        <div class="p-6 border-t border-[#334155]">
+            <button onclick="downloadTemplate()" class="w-full py-2 border border-gray-600 rounded text-xs text-gray-400 hover:text-white hover:border-white transition">
+                <i class="fas fa-download mr-2"></i> Get Excel Template
+            </button>
+        </div>
+    </div>
+
+    <!-- MAIN CONTENT -->
+    <div class="flex-1 flex flex-col relative bg-slate-900">
+        
+        <!-- HEADER -->
+        <div class="h-16 border-b border-[#334155] bg-[#1e293b] flex items-center justify-between px-8">
+            <div class="flex items-center gap-3">
+                <span class="text-xs font-bold text-gray-500 uppercase">Target Entity:</span>
+                <span id="entityName" class="text-white font-bold text-sm bg-gray-700 px-3 py-1 rounded">No File Loaded</span>
+            </div>
+            <div id="statusBadge" class="hidden flex items-center gap-2 text-xs bg-green-900/30 text-green-400 px-3 py-1 rounded border border-green-900">
+                <i class="fas fa-check-circle"></i> PARSING SUCCESSFUL
+            </div>
+        </div>
+
+        <div id="loadingLine" class="loading-bar"></div>
+
+        <!-- CONTENT AREA -->
+        <div class="flex-1 overflow-y-auto p-8">
+            
+            <!-- 1. UPLOAD TAB -->
+            <div id="upload" class="fade-in h-full flex flex-col items-center justify-center">
+                <div class="drop-zone glass-panel p-12 rounded-xl text-center max-w-2xl w-full cursor-pointer relative" onclick="document.getElementById('fileInput').click()">
+                    <input type="file" id="fileInput" class="hidden" accept=".xlsx, .csv" onchange="handleFileUpload(this)">
+                    
+                    <div class="w-20 h-20 bg-gray-800 rounded-full flex items-center justify-center mx-auto mb-6">
+                        <i class="fas fa-file-excel text-3xl text-green-500"></i>
+                    </div>
+                    <h3 class="text-2xl font-bold text-white mb-2">Upload Zomato Financials (.xlsx)</h3>
+                    <p class="text-gray-400 mb-6">AI Auto-Mapper will detect: Revenue, EBITDA, Net Income, Cash Flow</p>
+                    <button class="bg-red-600 hover:bg-red-500 text-white px-8 py-2 rounded font-bold shadow-lg transition">
+                        Select File
+                    </button>
+                </div>
+                
+                <div class="mt-8 text-center">
+                    <p class="text-gray-500 text-xs mb-2">- OR LOAD DEMO -</p>
+                    <button onclick="loadDemoZomato()" class="text-blue-400 text-xs hover:underline">Load Zomato FY23-25 Proxy Data</button>
+                </div>
+            </div>
+
+            <!-- 2. DASHBOARD TAB -->
+            <div id="dashboard" class="hidden fade-in space-y-6">
+                <!-- KPIs -->
+                <div class="grid grid-cols-4 gap-4">
+                    <div class="glass-panel p-5 rounded border-l-4 border-red-500">
+                        <div class="text-gray-400 text-xs font-bold uppercase">Total Revenue</div>
+                        <div class="text-2xl font-bold text-white mt-1 mono" id="kpiRev">-</div>
+                        <div id="kpiRevTrend" class="text-xs mt-2 font-bold">-</div>
+                    </div>
+                    <div class="glass-panel p-5 rounded border-l-4 border-yellow-500">
+                        <div class="text-gray-400 text-xs font-bold uppercase">Net Profit Margin</div>
+                        <div class="text-2xl font-bold text-white mt-1 mono" id="kpiMargin">-</div>
+                        <div class="text-xs text-gray-500 mt-2">Profitability Quality</div>
+                    </div>
+                    <div class="glass-panel p-5 rounded border-l-4 border-blue-500">
+                        <div class="text-gray-400 text-xs font-bold uppercase">Cash Position</div>
+                        <div class="text-2xl font-bold text-white mt-1 mono" id="kpiCash">-</div>
+                        <div class="text-xs text-gray-500 mt-2">Liquidity</div>
+                    </div>
+                    <div class="glass-panel p-5 rounded border-l-4 border-green-500">
+                        <div class="text-gray-400 text-xs font-bold uppercase">Earnings Quality</div>
+                        <div class="text-2xl font-bold text-white mt-1 mono" id="kpiEQ">-</div>
+                        <div class="text-xs text-gray-500 mt-2">CFO / Net Income</div>
+                    </div>
+                </div>
+
+                <!-- Charts -->
+                <div class="grid grid-cols-3 gap-6 h-80">
+                    <div class="col-span-2 glass-panel p-5 rounded flex flex-col">
+                        <h3 class="text-xs font-bold text-gray-400 uppercase mb-4">Top-line vs Bottom-line Trajectory</h3>
+                        <div class="flex-1 relative"><canvas id="mainChart"></canvas></div>
+                    </div>
+                    <div class="glass-panel p-5 rounded flex flex-col">
+                        <h3 class="text-xs font-bold text-gray-400 uppercase mb-4">Cost Structure</h3>
+                        <div class="flex-1 relative"><canvas id="pieChart"></canvas></div>
+                    </div>
+                </div>
+
+                <!-- Raw Data Preview -->
+                <div class="glass-panel p-6 rounded">
+                    <h3 class="text-white font-bold text-sm mb-4">Mapped Financial Data</h3>
+                    <table class="fin-table" id="dataTable"></table>
+                </div>
+            </div>
+
+            <!-- 3. REPORT TAB -->
+            <div id="report" class="hidden fade-in max-w-4xl mx-auto">
+                <div class="glass-panel p-10 rounded bg-[#1e293b] border-t-4 border-red-500">
+                    <div class="flex justify-between items-start mb-6 border-b border-gray-700 pb-4">
+                        <div>
+                            <h2 class="text-2xl font-bold text-white">Investment Memo: Zomato Ltd.</h2>
+                            <p class="text-gray-400 text-sm mt-1">Automated Financial Assessment</p>
+                        </div>
+                        <button onclick="window.print()" class="text-gray-400 hover:text-white"><i class="fas fa-print"></i></button>
+                    </div>
+
+                    <div class="space-y-8">
+                        <div>
+                            <h3 class="text-red-400 text-sm font-bold uppercase tracking-wider mb-2">1. Growth & Profitability</h3>
+                            <p id="txtGrowth" class="text-gray-300 text-sm leading-relaxed"></p>
+                        </div>
+
+                        <div>
+                            <h3 class="text-yellow-400 text-sm font-bold uppercase tracking-wider mb-2">2. Operating Efficiency & Burn</h3>
+                            <p id="txtEfficiency" class="text-gray-300 text-sm leading-relaxed"></p>
+                        </div>
+
+                        <div>
+                            <h3 class="text-blue-400 text-sm font-bold uppercase tracking-wider mb-2">3. Solvency & Liquidity Risk</h3>
+                            <p id="txtRisk" class="text-gray-300 text-sm leading-relaxed"></p>
+                        </div>
+
+                        <div class="bg-gray-800 p-4 rounded border-l-4 border-green-500">
+                            <h3 class="text-green-400 text-xs font-bold uppercase mb-1">Analyst Verdict</h3>
+                            <p id="txtVerdict" class="text-white font-bold text-sm"></p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+        </div>
+    </div>
+
+    <!-- LOGIC ENGINE -->
+    <script>
+        // --- 1. STATE ---
+        let financialData = {}; 
+        let years = [];
+        let chart1 = null;
+        let chart2 = null;
+
+        // --- 2. UPLOAD & PARSING (THE FUZZY LOGIC) ---
+        function handleFileUpload(input) {
+            const file = input.files[0];
+            if(!file) return;
+            
+            // Animation
+            document.getElementById('loadingLine').style.width = "100%";
+            document.getElementById('entityName').innerText = "Parsing: " + file.name;
+
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                const data = new Uint8Array(e.target.result);
+                const workbook = XLSX.read(data, {type: 'array'});
+                const sheet = workbook.Sheets[workbook.SheetNames[0]];
+                const json = XLSX.utils.sheet_to_json(sheet, {header: 1});
+                
+                processData(json);
+            };
+            reader.readAsArrayBuffer(file);
+        }
+
+        function processData(rows) {
+            // 1. Detect Header Row (Look for 202X)
+            let headerIdx = -1;
+            for(let i=0; i<rows.length; i++) {
+                if(rows[i].some(c => String(c).includes('20'))) {
+                    headerIdx = i;
+                    years = rows[i].filter(c => String(c).includes('20'));
+                    break;
+                }
+            }
+
+            if(headerIdx === -1) { alert("Could not detect years (2023, 2024, etc) in row header."); return; }
+
+            // 2. Fuzzy Mapping Dictionary (The "Brain")
+            // Keys are internal IDs, Values are possible variations in Zomato's Excel
+            const mapping = {
+                'Revenue': ['revenue', 'sales', 'turnover', 'income from operations'],
+                'COGS': ['cost of goods', 'purchase of stock', 'direct expenses', 'cost of material'],
+                'NetProfit': ['profit for the year', 'net profit', 'profit/(loss)'],
+                'Cash': ['cash and cash equivalents', 'cash & bank'],
+                'TotalAssets': ['total assets'],
+                'TotalEquity': ['total equity', 'shareholder'],
+                'TotalLiab': ['total liabilities'],
+                'CFO': ['cash flow from operating', 'net cash from operating'],
+                'OpEx': ['other expenses', 'employee benefit', 'marketing'] // Simplified aggregation
+            };
+
+            let extracted = {};
+
+            rows.forEach(row => {
+                let label = String(row[0]).toLowerCase().trim();
+                for (let [key, aliases] of Object.entries(mapping)) {
+                    if (aliases.some(a => label.includes(a))) {
+                        // Get values for the years columns
+                        let values = [];
+                        // Assuming data columns start at index 1
+                        for(let k=1; k <= years.length; k++) {
+                            let val = parseFloat(row[k]);
+                            if(!isNaN(val)) values.push(val);
+                        }
+                        
+                        // Aggregate if multiple matches (e.g. OpEx components)
+                        if(extracted[key]) {
+                            extracted[key] = extracted[key].map((num, idx) => num + (values[idx] || 0));
+                        } else {
+                            extracted[key] = values;
+                        }
+                    }
+                }
+            });
+
+            // 3. Fallbacks / Calculations
+            if(!extracted.Revenue) { alert("Parsing Failed: Could not find Revenue."); return; }
+            if(!extracted.OpEx) extracted.OpEx = extracted.Revenue.map(r => r * 0.4); // Fallback assumption
+
+            financialData = extracted;
+            setTimeout(renderAnalysis, 800);
+        }
+
+        // --- 3. DEMO MODE (ZOMATO PROXY DATA) ---
+        function loadDemoZomato() {
+            document.getElementById('loadingLine').style.width = "100%";
+            document.getElementById('entityName').innerText = "Zomato Ltd. (Consolidated Proxy)";
+            
+            years = ['FY2023', 'FY2024', 'FY2025 (E)'];
+            financialData = {
+                Revenue: [7079, 12114, 16500], // Cr
+                NetProfit: [-971, 351, 1200], // Turnaround
+                Cash: [11323, 12500, 14000], 
+                CFO: [-500, 800, 2500],
+                OpEx: [8050, 11000, 13500], // Marketing + Delivery
+                TotalAssets: [20000, 23000, 28000],
+                TotalLiab: [2000, 3000, 4000]
+            };
+            setTimeout(renderAnalysis, 800);
+        }
+
+        // --- 4. RENDER ENGINE ---
+        function renderAnalysis() {
+            document.getElementById('loadingLine').style.width = "0%";
+            document.getElementById('statusBadge').classList.remove('hidden');
+            switchTab('dashboard');
+
+            const idx = years.length - 1; // Latest
+            const prev = idx - 1;
+
+            // KPIs
+            const revGrowth = ((financialData.Revenue[idx] - financialData.Revenue[prev]) / financialData.Revenue[prev]) * 100;
+            const netMargin = (financialData.NetProfit[idx] / financialData.Revenue[idx]) * 100;
+            const eq = financialData.NetProfit[idx] !== 0 ? (financialData.CFO[idx] / financialData.NetProfit[idx]) : 0;
+
+            document.getElementById('kpiRev').innerText = "₹" + financialData.Revenue[idx].toLocaleString() + " Cr";
+            document.getElementById('kpiRevTrend').innerText = `▲ ${revGrowth.toFixed(1)}% YoY`;
+            document.getElementById('kpiRevTrend').className = "text-xs mt-2 font-bold text-green-400";
+
+            document.getElementById('kpiMargin').innerText = netMargin.toFixed(1) + "%";
+            document.getElementById('kpiMargin').className = `text-2xl font-bold mt-1 mono ${netMargin > 0 ? 'text-green-400' : 'text-red-400'}`;
+
+            document.getElementById('kpiCash').innerText = "₹" + (financialData.Cash ? financialData.Cash[idx] : 0).toLocaleString() + " Cr";
+            document.getElementById('kpiEQ').innerText = eq.toFixed(2) + "x";
+
+            // Charts
+            updateCharts();
+            updateTable();
+            generateTextReport(revGrowth, netMargin, eq);
+        }
+
+        function updateCharts() {
+            const ctx1 = document.getElementById('mainChart').getContext('2d');
+            const ctx2 = document.getElementById('pieChart').getContext('2d');
+            if(chart1) chart1.destroy();
+            if(chart2) chart2.destroy();
+
+            chart1 = new Chart(ctx1, {
+                type: 'bar',
+                data: {
+                    labels: years,
+                    datasets: [
+                        { label: 'Revenue', data: financialData.Revenue, backgroundColor: '#cb202d' },
+                        { label: 'Net Profit', data: financialData.NetProfit, type: 'line', borderColor: '#22c55e', borderWidth: 3 }
+                    ]
+                },
+                options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { labels: { color: 'white' } } }, scales: { y: { ticks: { color: 'gray' }, grid: { color: '#334155' } }, x: { ticks: { color: 'gray' } } } }
+            });
+
+            // Proxy Cost Structure
+            const idx = years.length - 1;
+            const profit = Math.max(0, financialData.NetProfit[idx]);
+            const costs = financialData.Revenue[idx] - profit;
+
+            chart2 = new Chart(ctx2, {
+                type: 'doughnut',
+                data: {
+                    labels: ['Costs & OpEx', 'Net Profit'],
+                    datasets: [{
+                        data: [costs, profit],
+                        backgroundColor: ['#475569', '#22c55e'],
+                        borderWidth: 0
+                    }]
+                },
+                options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'right', labels: { color: 'white' } } } }
+            });
+        }
+
+        function updateTable() {
+            let html = `<thead><tr><th>Item</th>${years.map(y => `<th>${y}</th>`).join('')}</tr></thead><tbody>`;
+            for (let [key, vals] of Object.entries(financialData)) {
+                if(vals && vals.length) {
+                    html += `<tr><td>${key}</td>${vals.map(v => `<td>${v.toLocaleString()}</td>`).join('')}</tr>`;
+                }
+            }
+            html += "</tbody>";
+            document.getElementById('dataTable').innerHTML = html;
+        }
+
+        function generateTextReport(growth, margin, eq) {
+            // 1. Growth
+            let growthText = `The company delivered strong top-line performance with a ${growth.toFixed(1)}% YoY growth rate. `;
+            if(growth > 20) growthText += "This indicates the company is in a hyper-growth phase, likely driven by volume expansion in food delivery and quick-commerce (Blinkit).";
+            else growthText += "Growth appears to be stabilizing, suggesting market maturity.";
+            document.getElementById('txtGrowth').innerText = growthText;
+
+            // 2. Efficiency
+            let effText = "";
+            if(margin < 0) effText = "The company is currently loss-making at a net level, prioritizing market share over immediate profitability. However, track EBITDA trends to see if unit economics are improving.";
+            else effText = `The company has turned profitable with a margin of ${margin.toFixed(1)}%. This is a pivotal moment indicating that the platform leverage is finally kicking in against fixed costs.`;
+            document.getElementById('txtEfficiency').innerText = effText;
+
+            // 3. Risk
+            let riskText = `Cash position is robust at ₹${financialData.Cash[years.length-1].toLocaleString()} Cr. `;
+            if(eq < 1 && margin > 0) riskText += "WARNING: Net Income is positive but Operating Cash Flow conversion is low. Verify if profit is driven by non-operating income (like treasury income).";
+            else riskText += "Earnings quality is acceptable. Balance sheet remains asset-light typical of platform aggregators.";
+            document.getElementById('txtRisk').innerText = riskText;
+
+            // Verdict
+            document.getElementById('txtVerdict').innerText = margin > 0 ? "BUY / ACCUMULATE: Proven turnaround story with sustained growth." : "HOLD / WATCH: Wait for consistent quarterly profitability.";
+        }
+
+        // --- 5. UTILS ---
+        function switchTab(id) {
+            ['upload', 'dashboard', 'report'].forEach(t => document.getElementById(t).classList.add('hidden'));
+            document.getElementById(id).classList.remove('hidden');
+            document.querySelectorAll('.nav-item').forEach(e => e.classList.remove('active'));
+            document.getElementById('nav-'+id).classList.add('active');
+        }
+
+        function downloadTemplate() {
+            // Create a dummy workbook
+            const wb = XLSX.utils.book_new();
+            const ws_data = [
+                ["Item", "FY2024", "FY2023", "FY2022"],
+                ["Revenue from Operations", "12000", "7000", "5000"],
+                ["Total Expenses", "11000", "8000", "6000"],
+                ["Profit for the Year", "1000", "-1000", "-1000"],
+                ["Cash and Cash Equivalents", "12000", "11000", "9000"],
+                ["Net Cash from Operating Activities", "800", "-500", "-800"]
+            ];
+            const ws = XLSX.utils.aoa_to_sheet(ws_data);
+            XLSX.utils.book_append_sheet(wb, ws, "Zomato_Template");
+            XLSX.writeFile(wb, "Zomato_Analysis_Template.xlsx");
+        }
+    </script>
+</body>
+</html>
